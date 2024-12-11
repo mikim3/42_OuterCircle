@@ -9,45 +9,59 @@ from bs4 import BeautifulSoup
 IMG_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp']
 
 def is_image_url(url):
+  # lower이유 확장자 대소문자 미구분하기 위함
   lower_url = url.lower()
+  # 하나라도 True면 any(...) 결과 True
   return any(lower_url.endswith(ext) for ext in IMG_EXTENSIONS)
 
 def download_image(img_url, save_path):
   try:
+    # HTTP GET 요청  # stream 이를 통해 큰 파일을 효율적으로 다운로드
     r = requests.get(img_url, stream=True, timeout=10)
+    # HTTP 응답 상태 확인
     r.raise_for_status()
+    # with으로 파일을 열고, 블록이 끝나면 자동으로 파일을 닫음
     with open(save_path, 'wb') as f:
       for chunk in r.iter_content(chunk_size=8192):
         f.write(chunk)
     print(f"[+] Downloaded: {img_url} -> {save_path}")
+    return True
   except Exception as e:
     print(f"[-] Failed to download {img_url}: {e}")
+    return False
 
-def spider_crawl(url, save_dir, depth, max_depth, visited):
+def spider_crawl(url, save_dir, depth, max_depth, visited, download_count):
   # 깊이 초과 시 중단
   if depth > max_depth:
-    return
+    return download_count
   # 이미 방문한 URL이면 중단
   if url in visited:
-    return
+    return download_count
   visited.add(url)
+
+  print(f"[*] Crawling URL: {url} at depth {depth}")
 
   # 페이지 로드
   try:
     r = requests.get(url, timeout=10)
     r.raise_for_status()
-  except requests.RequestException:
-    return
+  except requests.RequestException as e:
+    print(f"[-] Failed to fetch {url}: {e}")
+    return download_count
 
   soup = BeautifulSoup(r.text, 'html.parser')
 
   # 이미지 다운로드
   images = soup.find_all('img')
+  if not images:
+    print(f"[!] No images found at {url}")
   for img in images:
     src = img.get('src')
     if src:
+      # 절대 URL로 변경
       img_url = urljoin(url, src)
       if is_image_url(img_url):
+        # 파일명만 추출
         filename = os.path.basename(urlparse(img_url).path)
         # 파일명이 없을 경우 스킵
         if not filename:
@@ -56,15 +70,25 @@ def spider_crawl(url, save_dir, depth, max_depth, visited):
         if not os.path.exists(save_dir):
           os.makedirs(save_dir)
         save_path = os.path.join(save_dir, filename)
-        download_image(img_url, save_path)
+        success = download_image(img_url, save_path)
+        if success:
+          download_count += 1
 
-  # 재귀 탐색 옵션이 있는 경우 하위 링크 추적
+  # 재귀로 하위 링크 추적
   links = soup.find_all('a')
+  if not links:
+    print(f"[!] No links found at {url}")
   for link in links:
     href = link.get('href')
     if href:
       next_url = urljoin(url, href)
-      spider_crawl(next_url, save_dir, depth+1, max_depth, visited)
+      # URL 스킴 추가: 스킴이 없을 경우 'https://' 추가
+      parsed_next_url = urlparse(next_url)
+      if not parsed_next_url.scheme:
+        next_url = 'https://' + next_url
+      download_count = spider_crawl(next_url, save_dir, depth+1, max_depth, visited, download_count)
+
+  return download_count
 
 def main():
   args = sys.argv[1:]
@@ -107,12 +131,20 @@ def main():
     print("Usage: ./spider [-r -l N -p PATH] URL")
     sys.exit(1)
 
+  # URL 스킴 추가: 스킴이 없을 경우 'https://' 추가
+  parsed_url = urlparse(url)
+  if not parsed_url.scheme:
+    url = 'https://' + url
+
   visited = set()
+  download_count = 0
   if recursive:
-    spider_crawl(url, save_dir, 1, max_depth, visited)
+    download_count = spider_crawl(url, save_dir, 1, max_depth, visited, download_count)
   else:
     # 재귀 옵션이 없으면 depth=1, max_depth=1로 동일
-    spider_crawl(url, save_dir, 1, 1, visited)
+    download_count = spider_crawl(url, save_dir, 1, 1, visited, download_count)
+
+  print(f"[*] Download completed. Total images downloaded: {download_count}")
 
 if __name__ == '__main__':
   main()

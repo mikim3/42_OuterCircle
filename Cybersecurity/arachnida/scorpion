@@ -23,7 +23,7 @@ def print_metadata(filename):
   try:
     with Image.open(filename) as img:
       print(f"  Image Format: {img.format}")
-      print(f"  Image Size: {img.size}")     # (width, height)
+      print(f"  Image Size: {img.size}")
       print(f"  Image Mode: {img.mode}")
 
       # EXIF 메타데이터 추출
